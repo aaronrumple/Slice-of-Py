@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# Aaron Rumple, AIA
+
 import sys
 from pyrevit import revit, DB, script, forms
 from Autodesk.Revit.DB import *
@@ -10,34 +12,18 @@ output = script.get_output()
 ROOM_FINISH_PARAM_NAME = "Floor Finish"
 LAYER_THICKNESS_FT = 0.25 / 12.0  # 1/4"
 
-
-# ------------------------------------------------------------
-# Material
-# ------------------------------------------------------------
-
 def get_or_create_material(name):
     for m in FilteredElementCollector(doc).OfClass(Material):
         if m.Name == name:
             return m
     return doc.GetElement(Material.Create(doc, name))
 
-
-# ------------------------------------------------------------
-# Floor Type
-# ------------------------------------------------------------
-
 def get_or_create_floor_type(type_name, material):
-    """
-    Get or create an Architectural (non-structural) floor type with the given name and material.
-    """
-
-    # 1) Check if type already exists
     for ft in FilteredElementCollector(doc).OfClass(FloorType):
         p = ft.get_Parameter(BuiltInParameter.SYMBOL_NAME_PARAM)
         if p and p.AsString() == type_name:
             return ft
 
-    # 2) Find a base Architectural (non-structural) floor type
     arch_types = []
 
     for ft in FilteredElementCollector(doc).OfClass(FloorType):
@@ -52,15 +38,12 @@ def get_or_create_floor_type(type_name, material):
 
     base_type = arch_types[0]
 
-    # 3) Duplicate base type (in pyRevit this returns the element)
     new_type = base_type.Duplicate(type_name)
 
-    # 4) Force new type to be non-structural (just in case)
     p_struct_new = new_type.get_Parameter(BuiltInParameter.FLOOR_PARAM_IS_STRUCTURAL)
     if p_struct_new and not p_struct_new.IsReadOnly:
         p_struct_new.Set(0)
 
-    # 5) Modify compound structure: first layer thickness + material
     cs = new_type.GetCompoundStructure()
     if not cs or cs.LayerCount < 1:
         raise Exception("Invalid compound structure in duplicated floor type.")
@@ -69,17 +52,11 @@ def get_or_create_floor_type(type_name, material):
     cs.SetMaterialId(0, material.Id)
     new_type.SetCompoundStructure(cs)
 
-    # 6) Ensure name is correct
     name_param = new_type.get_Parameter(BuiltInParameter.SYMBOL_NAME_PARAM)
     if name_param and not name_param.IsReadOnly:
         name_param.Set(type_name)
 
     return new_type
-
-
-# ------------------------------------------------------------
-# Pre-collect Floors by Level + Phase (FAST)
-# ------------------------------------------------------------
 
 floors_by_level_phase = {}
 
@@ -105,11 +82,6 @@ for f in all_floors:
         floors_by_level_phase[key] = []
 
     floors_by_level_phase[key].append(f)
-
-
-# ------------------------------------------------------------
-# Fast Floor Exists Check (Level + Phase + Room Location)
-# ------------------------------------------------------------
 
 def floor_exists_in_room(room):
 
@@ -143,20 +115,11 @@ def floor_exists_in_room(room):
 
     return False
 
-
-# ------------------------------------------------------------
-# Collect Rooms
-# ------------------------------------------------------------
-
 rooms = list(
     FilteredElementCollector(doc)
     .OfCategory(BuiltInCategory.OST_Rooms)
     .WhereElementIsNotElementType()
 )
-
-# ------------------------------------------------------------
-# Main Transaction
-# ------------------------------------------------------------
 
 t = Transaction(doc, "Create Finish Floors (Phase Aware)")
 t.Start()
@@ -224,7 +187,6 @@ with forms.ProgressBar(title="Creating Finish Floors", cancellable=True) as pb:
         if not floor:
             continue
 
-        # 🔹 Set Phase = Room Phase (Correct 2025 Method)
         room_phase_param = room.get_Parameter(BuiltInParameter.ROOM_PHASE)
         if room_phase_param:
             room_phase_id = room_phase_param.AsElementId()
@@ -233,7 +195,6 @@ with forms.ProgressBar(title="Creating Finish Floors", cancellable=True) as pb:
             if floor_phase_param and not floor_phase_param.IsReadOnly:
                 floor_phase_param.Set(room_phase_id)
 
-        # Offset downward by thickness
         offset_param = floor.get_Parameter(
             BuiltInParameter.FLOOR_HEIGHTABOVELEVEL_PARAM
         )
@@ -245,7 +206,6 @@ with forms.ProgressBar(title="Creating Finish Floors", cancellable=True) as pb:
         if mark_param and not mark_param.IsReadOnly:
             mark_param.Set(room.Number)
 
-        # Update cache to prevent duplicates in same run
         key = (
             room.LevelId.IntegerValue,
             room_phase_id.IntegerValue
